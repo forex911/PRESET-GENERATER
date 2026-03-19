@@ -945,7 +945,7 @@
   const isLocal = ['localhost','127.0.0.1'].includes(window.location.hostname);
   const API_BASE_URL = isLocal
     ? 'http://127.0.0.1:8000'
-    : 'https://lightroom-preset-api.onrender.com';
+    : 'https://lightroom-preset-api-production.up.railway.app';
 
   /* ══ UPLOAD SETUP ══ */
   function setupUpload(inputEl, previewEl, placeholderEl, nameEl, cardEl) {
