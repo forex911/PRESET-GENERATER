@@ -68,3 +68,7 @@ def download_preset(filename: str):
         filename=filename,
         media_type="application/octet-stream"
     )
+
+@router.get("/status")
+def server_status():
+    return {"status": "online"}
