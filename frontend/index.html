@@ -1024,22 +1024,17 @@
 
   /* ══ FORM SUBMIT ══ */
   const progressSteps = document.querySelectorAll('.p-step');
-  let stepInterval;
 
-  function startStepAnimation() {
-    let i = 0;
-    progressSteps.forEach(s => s.classList.remove('active'));
-    progressSteps[0].classList.add('active');
-    stepInterval = setInterval(() => {
-      progressSteps[i].classList.remove('active');
-      i = (i + 1) % progressSteps.length;
-      progressSteps[i].classList.add('active');
-    }, 1800);
+  function updateStepAnimation(stepIndex) {
+    progressSteps.forEach((s, idx) => {
+      if (idx <= stepIndex) s.classList.add('active');
+      else s.classList.remove('active');
+    });
   }
 
-  function stopStepAnimation() {
-    clearInterval(stepInterval);
+  function resetStepAnimation() {
     progressSteps.forEach(s => s.classList.remove('active'));
+    if (progressSteps.length > 0) progressSteps[0].classList.add('active');
   }
 
   document.getElementById('presetForm').addEventListener('submit', async e => {
@@ -1051,7 +1046,7 @@
 
     btn.disabled = true;
     progress.classList.add('visible');
-    startStepAnimation();
+    resetStepAnimation();
 
     const formData = new FormData(e.target);
 
@@ -1059,19 +1054,46 @@
       const response = await fetch(`${API_BASE_URL}/generate-preset`, {
         method: 'POST', body: formData,
       });
-      const rawText = await response.text();
-      let data;
-      try { data = JSON.parse(rawText); }
-      catch { throw new Error('Server returned an unexpected response.'); }
 
-      if (!response.ok || !data.success) throw new Error(data.error || 'Preset generation failed.');
+      if (!response.ok) throw new Error('Failed to connect to backend.');
 
-      showStatus(
-        'success',
-        'Preset Generated',
-        'Your cinematic Lightroom preset is ready. Import the .XMP file into Adobe Lightroom Classic or Lightroom CC.',
-        `${API_BASE_URL}${data.download_url}`
-      );
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder('utf-8');
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const chunk = decoder.decode(value, { stream: true });
+        const lines = chunk.split('\n');
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const dataStr = line.replace('data: ', '').trim();
+            if (!dataStr) continue;
+
+            let data;
+            try { data = JSON.parse(dataStr); } catch { continue; }
+
+            if (data.step !== undefined) {
+              updateStepAnimation(data.step);
+            } else if (data.success) {
+              updateStepAnimation(3); // make sure last step is active
+              showStatus(
+                'success',
+                'Preset Generated',
+                'Your cinematic Lightroom preset is ready. Import the .XMP file into Adobe Lightroom Classic or Lightroom CC.',
+                `${API_BASE_URL}${data.download_url}`
+              );
+              btn.disabled = false;
+              progress.classList.remove('visible');
+              return;
+            } else if (data.success === false) {
+              throw new Error(data.error || 'Generation failed.');
+            }
+          }
+        }
+      }
     } catch (err) {
       console.error(err);
       const isQuota = err.message.includes('429') || err.message.includes('RESOURCE_EXHAUSTED');
@@ -1082,10 +1104,8 @@
           ? 'The AI service is temporarily rate-limited. Please wait a moment and try again.'
           : err.message || 'An unexpected error occurred. Please check your images and try again.'
       );
-    } finally {
       btn.disabled = false;
       progress.classList.remove('visible');
-      stopStepAnimation();
     }
   });
 
