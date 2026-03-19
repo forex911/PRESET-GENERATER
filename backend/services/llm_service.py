@@ -1,143 +1,172 @@
 import os
 import json
+import base64
 import time
-import requests
+import mimetypes
 from dotenv import load_dotenv
+from openai import OpenAI
 
+# Load environment variables
 load_dotenv()
 
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-GEMINI_URL = "https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent"
+# Get API key
+CLARIFAI_API_KEY = os.getenv("CLARIFAI_API_KEY")
+
+if not CLARIFAI_API_KEY:
+    raise ValueError("❌ CLARIFAI_API_KEY not found in .env")
+
+# --------------------------------------------------
+# 🔹 Convert image → Base64 Data URI
+# --------------------------------------------------
+def encode_image_to_data_uri(image_path: str) -> str:
+    mime_type, _ = mimetypes.guess_type(image_path)
+    if not mime_type:
+        mime_type = "image/jpeg"
+
+    with open(image_path, "rb") as img:
+        b64 = base64.b64encode(img.read()).decode("utf-8")
+
+    return f"data:{mime_type};base64,{b64}"
 
 
-def generate_lightroom_params(feature_diff: dict, retries: int = 3) -> dict:
-    """
-    LLM decides STYLE only
-    Math decides ALL numeric values
-    Lightroom-safe, frontend-safe
-    """
+# --------------------------------------------------
+# 🔹 Generate Lightroom Parameters
+# --------------------------------------------------
+def generate_lightroom_params(feature_diff, input_img, ref_img, retries=3):
 
-    # ---------------- LLM PROMPT (SEMANTIC ONLY) ----------------
+    input_uri = encode_image_to_data_uri(input_img)
+    ref_uri = encode_image_to_data_uri(ref_img)
+
     prompt = f"""
 You are a professional cinematic colorist.
 
-Choose cinematic intent ONLY.
+Analyze Image 1 (input) and Image 2 (reference).
+Match the color grading style of the reference image.
 
-Return JSON with EXACT keys:
-wb_style: ["cool", "neutral", "warm"]
-contrast_style: ["soft", "balanced", "punchy"]
-saturation_style: ["muted", "natural", "rich"]
+Base adjustments already computed:
+{json.dumps(feature_diff)}
 
-Image difference data:
-{feature_diff}
+Return ONLY JSON with Lightroom parameters:
 
-Return JSON only. No explanation.
+Allowed keys:
+- Highlights2012 (-100 to 100)
+- Shadows2012 (-100 to 100)
+- Whites2012 (-100 to 100)
+- Blacks2012 (-100 to 100)
+- Texture (-100 to 100)
+- Clarity2012 (-100 to 100)
+- Dehaze (-100 to 100)
+- HueAdjustmentRed, HueAdjustmentYellow, HueAdjustmentGreen, HueAdjustmentBlue (-100 to 100)
+- SaturationAdjustmentRed, SaturationAdjustmentYellow, SaturationAdjustmentGreen (-100 to 100)
+- LuminanceAdjustmentRed, LuminanceAdjustmentYellow, LuminanceAdjustmentBlue (-100 to 100)
+- SplitToningShadowHue (0 to 360)
+- SplitToningShadowSaturation (0 to 100)
+- SplitToningHighlightHue (0 to 360)
+- SplitToningHighlightSaturation (0 to 100)
+- PostCropVignetteAmount (-100 to 100)
+- GrainAmount (0 to 100)
+
+STRICT RULES:
+- JSON ONLY
+- No explanation
+- No markdown
 """
 
-    payload = {
-        "contents": [{"parts": [{"text": prompt}]}]
+    client = OpenAI(
+        base_url="https://api.clarifai.com/v2/ext/openai/v1",
+        api_key=CLARIFAI_API_KEY
+    )
+
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": prompt},
+                {"type": "image_url", "image_url": {"url": input_uri}},
+                {"type": "image_url", "image_url": {"url": ref_uri}},
+            ]
+        }
+    ]
+
+    for attempt in range(retries):
+        try:
+            response = client.chat.completions.create(
+                model="https://clarifai.com/openai/chat-completion/models/gpt-4o",
+                messages=messages,
+                max_tokens=1000,
+                temperature=0.3
+            )
+
+            text = response.choices[0].message.content.strip()
+
+            # Clean response if wrapped
+            if text.startswith("```"):
+                text = text.replace("```json", "").replace("```", "").strip()
+
+            ai_params = json.loads(text)
+            return ai_params
+
+        except Exception as e:
+            if attempt == retries - 1:
+                raise Exception(f"❌ API Error: {str(e)}")
+            time.sleep(2)
+
+
+# --------------------------------------------------
+# 🔹 Convert Params → Lightroom XMP File
+# --------------------------------------------------
+def generate_xmp(params, output_file="preset.xmp"):
+
+    xmp = f'''<?xml version="1.0" encoding="UTF-8"?>
+<x:xmpmeta xmlns:x="adobe:ns:meta/">
+ <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+  <rdf:Description xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/">
+'''
+
+    for key, value in params.items():
+        xmp += f'   <crs:{key}>{value}</crs:{key}>\n'
+
+    xmp += '''
+  </rdf:Description>
+ </rdf:RDF>
+</x:xmpmeta>
+'''
+
+    with open(output_file, "w") as f:
+        f.write(xmp)
+
+    print(f"✅ XMP preset saved: {output_file}")
+
+
+# --------------------------------------------------
+# 🔥 MAIN EXECUTION
+# --------------------------------------------------
+if __name__ == "__main__":
+
+    # Example base adjustments (your computed physics)
+    feature_diff = {
+        "Exposure2012": 0.4,
+        "Contrast2012": 20,
+        "Temperature": 5500,
+        "Tint": 10,
+        "Saturation": 5
     }
 
-    # ---------------- GEMINI CALL ----------------
-    for _ in range(retries):
-        response = requests.post(
-            f"{GEMINI_URL}?key={GEMINI_API_KEY}",
-            json=payload,
-            headers={"Content-Type": "application/json"}
-        )
+    input_image = "input.jpg"
+    reference_image = "reference.jpg"
 
-        if response.status_code == 503:
-            time.sleep(2)
-            continue
+    print("🚀 Generating LUT...")
 
-        if response.status_code != 200:
-            raise Exception(response.text)
+    ai_params = generate_lightroom_params(
+        feature_diff,
+        input_image,
+        reference_image
+    )
 
-        data = response.json()
-        text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+    # Merge base + AI
+    final_params = {**feature_diff, **ai_params}
 
-        if text.startswith("```"):
-            text = text.replace("```json", "").replace("```", "").strip()
+    print("\n🎯 FINAL PARAMETERS:")
+    print(json.dumps(final_params, indent=2))
 
-        ai = json.loads(text)
-        break
-    else:
-        raise Exception("Gemini overloaded")
-
-    # ---------------- SEMANTIC INTENT ----------------
-    wb_style = ai.get("wb_style", "neutral")
-    contrast_style = ai.get("contrast_style", "balanced")
-    saturation_style = ai.get("saturation_style", "natural")
-
-    # ---------------- NUMERIC PARAMS (DETERMINISTIC) ----------------
-    params = {}
-
-    # Exposure (safe range)
-    params["Exposure2012"] = round(feature_diff.get("exposure", -0.3), 2)
-
-    # Contrast
-    params["Contrast2012"] = {
-        "soft": 8,
-        "balanced": 14,
-        "punchy": 20
-    }[contrast_style]
-
-    # Saturation
-    params["Saturation"] = {
-        "muted": -12,
-        "natural": -6,
-        "rich": 6
-    }[saturation_style]
-
-    params["Vibrance"] = {
-        "muted": -10,
-        "natural": 0,
-        "rich": 10
-    }[saturation_style]
-
-    # ---------------- WHITE BALANCE (HARD SAFE) ----------------
-    if wb_style == "cool":
-        params["Temperature"] = -6
-        params["Tint"] = -2
-    elif wb_style == "warm":
-        params["Temperature"] = 6
-        params["Tint"] = 3
-    else:
-        params["Temperature"] = 0
-        params["Tint"] = 0
-
-    # ---------------- CINEMATIC TONAL BASE ----------------
-    params["Highlights2012"] = -40
-    params["Shadows2012"] = 30
-    params["Whites2012"] = -20
-    params["Blacks2012"] = 15
-
-    params["Texture"] = -5
-    params["Clarity2012"] = -10
-    params["Dehaze"] = -6
-
-    # ---------------- HSL (SAFE & FILMIC) ----------------
-    params["HueAdjustmentYellow"] = -10
-    params["SaturationAdjustmentYellow"] = -8
-    params["LuminanceAdjustmentYellow"] = -8
-
-    params["HueAdjustmentGreen"] = 15
-    params["SaturationAdjustmentGreen"] = -6
-    params["LuminanceAdjustmentGreen"] = -12
-
-    # ---------------- COLOR GRADING (SUBTLE) ----------------
-    params["SplitToningShadowHue"] = 200
-    params["SplitToningShadowSaturation"] = 8
-    params["SplitToningHighlightHue"] = 45
-    params["SplitToningHighlightSaturation"] = 8
-
-    params["ColorGradeMidtoneHue"] = 35
-    params["ColorGradeMidtoneSat"] = 6
-    params["ColorGradeBlending"] = 50
-    params["ColorGradeBalance"] = -5
-
-    # ---------------- FILM FINISH ----------------
-    params["GrainAmount"] = 10
-    params["PostCropVignetteAmount"] = -10
-
-    return params
+    generate_xmp(final_params)

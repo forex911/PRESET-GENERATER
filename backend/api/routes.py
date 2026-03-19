@@ -39,8 +39,8 @@ async def generate_preset(
 
         lab_params = lab_color_transfer(input_path, ref_path)
 
-        # AI generation
-        raw_params = generate_lightroom_params(lab_params)
+        # AI generation (multimodal vision + math base)
+        raw_params = generate_lightroom_params(lab_params, input_path, ref_path)
 
         # ✅ SAFETY & CINEMATIC CLAMP (NEW, NON-DESTRUCTIVE)
         params = apply_color_safety(raw_params)
