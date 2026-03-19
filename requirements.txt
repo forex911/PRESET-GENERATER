@@ -19,7 +19,7 @@ httpx==0.26.0
 # Image Processing
 # =========================
 pillow==10.2.0
-opencv-python==4.9.0.80
+opencv-python-headless==4.9.0.80
 numpy==1.26.4
 
 # =========================
