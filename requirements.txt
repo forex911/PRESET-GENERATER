@@ -42,3 +42,8 @@ loguru==0.7.2
 # Optional / Utilities
 # =========================
 tqdm==4.66.2
+
+# =========================
+# AI Integration (Clarifai / OpenAI)
+# =========================
+openai>=1.12.0
