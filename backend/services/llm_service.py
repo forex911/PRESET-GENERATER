@@ -3,11 +3,9 @@ import json
 import base64
 import time
 import mimetypes
-from dotenv import load_dotenv
+
 from openai import OpenAI
 
-# Load environment variables
-load_dotenv()
 
 # Get API key
 CLARIFAI_API_KEY = os.getenv("CLARIFAI_API_KEY")
