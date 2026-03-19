@@ -694,6 +694,41 @@
       border: 1px solid var(--border);
     }
 
+    /* ── Server Status ── */
+    .server-status {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--text3);
+      transition: background 0.3s var(--ease);
+    }
+    .status-dot.online {
+      background: var(--success);
+      box-shadow: 0 0 8px rgba(46, 204, 113, 0.4);
+      animation: pulse-online 2s infinite;
+    }
+    .status-dot.offline {
+      background: var(--error);
+      box-shadow: 0 0 8px rgba(192, 57, 43, 0.4);
+    }
+    .status-text {
+      font-family: var(--font-mono);
+      font-size: 0.65rem;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--text2);
+    }
+    @keyframes pulse-online {
+      0% { box-shadow: 0 0 0 0 rgba(46, 204, 113, 0.4); }
+      70% { box-shadow: 0 0 0 6px rgba(46, 204, 113, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(46, 204, 113, 0); }
+    }
+
     /* ══════════════════════════════════════════
        ANIMATIONS
     ══════════════════════════════════════════ */
@@ -907,9 +942,13 @@
 
     <!-- FOOTER -->
     <div class="footer-strip">
-      <span class="footer-left">© 2026 Looks &amp; Presets — AI Cinematic Tool</span>
+      <span class="footer-left">© 2026 FOREX911</span>
       <div class="footer-right">
-        <span class="footer-tag">Lightroom Compatible</span>
+        <div class="server-status" id="serverStatus">
+          <div class="status-dot" id="statusDot"></div>
+          <span class="status-text" id="statusText">Checking...</span>
+        </div>
+        <span class="footer-tag">Looks &amp; Presets</span>
         <span class="footer-tag">XMP Output</span>
       </div>
     </div>
@@ -1058,6 +1097,35 @@
         progress.classList.remove('visible');
       }
     });
+
+    /* ══════════════════════════════════════════
+       SERVER STATUS POLLING
+    ══════════════════════════════════════════ */
+    async function checkServerStatus() {
+      const dot = document.getElementById('statusDot');
+      const text = document.getElementById('statusText');
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 5000);
+        const response = await fetch(`${API_BASE_URL}/status`, { signal: controller.signal });
+        clearTimeout(timeoutId);
+        
+        if (response.ok) {
+          dot.className = 'status-dot online';
+          text.textContent = 'System Online';
+        } else {
+          throw new Error('Not OK');
+        }
+      } catch (err) {
+        dot.className = 'status-dot offline';
+        text.textContent = 'Server Offline';
+      }
+    }
+
+    // Initial check
+    checkServerStatus();
+    // Poll every 30 seconds
+    setInterval(checkServerStatus, 30000);
   </script>
 
 </body>
